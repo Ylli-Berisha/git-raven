@@ -79,24 +79,19 @@ def _stage_params(stage: int):
 
 
 def _path(spec: RavenSpec, k: int, n: int):
-    """Position (x, y) and heading at frame k of n on a closed loop."""
+    """Position (x, y) and heading at frame k of n on a closed figure-eight."""
+    scale, wing_l, _, _ = _stage_params(spec.stage)
+    # Keep the body in frame but let wing tips swing past the edge.
+    room = LOGICAL / 2 - (wing_l * scale) * 0.5 - 4
     y = spec.yesterday
-    if y <= 0:
-        amp_x, amp_y = 14.0, 9.0
-    elif y < 4:
-        amp_x, amp_y = 20.0, 12.0
-    else:
-        amp_x, amp_y = 26.0, 15.0
-
-    _, wing_l, _, _ = _stage_params(spec.stage)
-    reach = wing_l * _stage_params(spec.stage)[0] + 3          # keep wings in frame
-    amp_x = max(4.0, min(amp_x, LOGICAL / 2 - reach))
-    amp_y = max(4.0, min(amp_y, LOGICAL / 2 - reach))
+    roam = 0.7 if y <= 0 else 0.85 if y < 4 else 1.0
+    amp_x = max(6.0, room * roam)
+    amp_y = max(6.0, room * roam * 0.9)
 
     def pos(t):
         a = 2 * math.pi * t / n
         return (LOGICAL / 2 + amp_x * math.sin(a),
-                LOGICAL / 2 + amp_y * math.sin(2 * a) * 0.9)
+                LOGICAL / 2 + amp_y * math.sin(2 * a))
 
     x0, y0 = pos(k)
     x1, y1 = pos(k + 0.25)
