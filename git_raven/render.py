@@ -1,6 +1,6 @@
 """Pixel-art raven renderer.
 
-Draws a top-down raven on a 144x96 logical grid (upscaled 4x to 576x384),
+Draws a top-down raven on a 192x72 logical grid (upscaled 4x to 768x288),
 with dithered shading, a thin outline and a transparent background.
 """
 from __future__ import annotations
@@ -10,8 +10,8 @@ from dataclasses import dataclass, field
 
 from PIL import Image, ImageDraw
 
-LOGICAL_W = 144   # canvas width in logical pixels (576px at 4x)
-LOGICAL_H = 96    # canvas height in logical pixels (384px at 4x)
+LOGICAL_W = 192   # canvas width in logical pixels (768px at 4x)
+LOGICAL_H = 72    # canvas height in logical pixels (288px at 4x)
 SCALE = 4
 FRAMES = 120
 FRAME_MS = 70
