@@ -150,7 +150,8 @@ def _state(spec: RavenSpec, k: int) -> dict:
     x1, y1 = path(min(1.0, u + 0.003))
     vx, vy = x1 - x0, y1 - y0
     near = _smooth(min(u, 1 - u) / 0.14)
-    face_fly = max(-1.0, min(1.0, vx / (0.0035 * amp_x)))           # flips over in a frame or two
+    raw = max(-1.0, min(1.0, vx / (0.0035 * amp_x)))
+    face_fly = (1.0 if raw >= 0 else -1.0) * (0.5 + 0.5 * abs(raw))  # flips over, never a thin sliver
     pitch_fly = 0.7 * max(-0.8, min(0.8, math.atan2(-vy, abs(vx) + 1e-6)))
     st["face"] = _lerp(1.0, face_fly, near)
     st["pitch"] = _lerp(rest_pitch, pitch_fly, near)
