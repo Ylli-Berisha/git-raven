@@ -39,8 +39,8 @@ def test_streak_and_yesterday():
     assert d["sheen"][0] == (0x17, 0x86, 0x00)
 
 
-def test_perch_folds_wings():
+def test_rest_pose_animates_and_loops():
     spec = RavenSpec(stage=3, yesterday=6)
-    perched = render_frame(spec, 0).getbbox()          # resting on the branch
-    flying = render_frame(spec, spec.frames // 2 + 10).getbbox()
-    assert (perched[2] - perched[0]) < (flying[2] - flying[0])
+    R = 34                                              # rest length for a busy day
+    assert render_frame(spec, 0).tobytes() != render_frame(spec, R // 2).tobytes()
+    assert render_frame(spec, 0).tobytes() == render_frame(spec, spec.frames).tobytes()

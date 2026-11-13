@@ -183,10 +183,132 @@ def _draw_branch(out) -> None:
                     out[X, Y] = c + (255,)
 
 
+def _perched_frame(spec: RavenSpec, k: int, st: dict) -> Image.Image:
+    """Side-view raven sitting on the branch, facing right."""
+    s, _, tail_l, sheen_k = _stage_params(spec.stage)
+    s = min(s, 1.9)
+    R = _rest_frames(spec)
+    img = Image.new("RGBA", (LOGICAL_W, LOGICAL_H), (0, 0, 0, 0))
+    out = img.load()
+    _draw_branch(out)
+
+    cx = LOGICAL_W / 2
+    fy = LOGICAL_H / 2 - 3.3                       # top surface of the branch
+    yaw, blink, wag = st["yaw"], st["blink"], st["wag"]
+    crouch = max(0.0, (k - (R - 4)) / 4.0)         # last frames: lean in to jump
+    th = math.radians(30) + 0.25 * crouch
+    d = (math.cos(th), -math.sin(th))
+    m = (math.sin(th), math.cos(th))
+    breathe = 0.03 * math.sin(2 * math.pi * 3 * k / R)
+    C = (cx - 0.5 * s, fy - (7.8 + breathe * 4) * s + 1.3 * s * crouch)
+
+    def W(a, b):                                    # body-local -> canvas
+        return (C[0] + (d[0] * a + m[0] * b) * s, C[1] + (d[1] * a + m[1] * b) * s)
+
+    def circle(cx_, cy_, r, steps=24):
+        return [(cx_ + r * math.cos(2 * math.pi * i / steps),
+                 cy_ + r * math.sin(2 * math.pi * i / steps)) for i in range(steps)]
+
+    body = [W(7.8 * math.cos(2 * math.pi * i / 28), 4.6 * math.sin(2 * math.pi * i / 28))
+            for i in range(28)]
+    hx = C[0] + d[0] * 8.2 * s + 1.8 * s * yaw
+    hy = C[1] + d[1] * 8.2 * s - 1.4 * s - 0.5 * s * abs(yaw) + 1.0 * s * crouch
+    head = circle(hx, hy, 3.1 * s)
+    tilt = yaw * 0.35 + 0.15
+    ct, stl = math.cos(tilt), math.sin(tilt)
+    beak = [(hx + (px * ct - py * stl) * s, hy + (px * stl + py * ct) * s)
+            for px, py in [(2.4, -1.7), (6.4, -0.6), (7.9, 1.2), (6.0, 1.0), (2.6, 1.9)]]
+
+    # tail: hangs down and back behind the branch
+    ph = 0.8 + 0.5 * wag
+    td = (-math.cos(ph), math.sin(ph))
+    tp = (math.sin(ph), math.cos(ph))
+    B0 = W(-6.0, 0.4)
+    Lt = tail_l * 0.95 * s
+    E = (B0[0] + td[0] * Lt, B0[1] + td[1] * Lt)
+    tail = [(B0[0] - tp[0] * 1.9 * s, B0[1] - tp[1] * 1.9 * s)]
+    for f in (-1.0, -0.5, 0.0, 0.5, 1.0):
+        w = 2.7 * s * f
+        back = 1.0 * s * abs(f) ** 1.6
+        tail.append((E[0] + tp[0] * w + td[0] * -back, E[1] + tp[1] * w + td[1] * -back))
+    tail.append((B0[0] + tp[0] * 1.9 * s, B0[1] + tp[1] * 1.9 * s))
+
+    wing = [W(a, b) for a, b in [(4.5, -1.2), (2.0, -4.2), (-2.5, -4.6), (-7.5, -3.2),
+                                  (-13.0, 0.8), (-8.0, 2.0), (-2.0, 2.6), (3.0, 1.8)]]
+
+    def mk(pts):
+        mm = Image.new("L", (LOGICAL_W, LOGICAL_H), 0)
+        ImageDraw.Draw(mm).polygon(pts, fill=255)
+        return mm.load()
+
+    legw = max(1, round(0.8 * s))
+    legs = Image.new("L", (LOGICAL_W, LOGICAL_H), 0)
+    ld = ImageDraw.Draw(legs)
+    for lx in (C[0] + 0.3 * s, C[0] + 2.8 * s):
+        ld.rectangle([lx, C[1] + 3.2 * s, lx + legw - 1, fy + 0.6], fill=255)
+    legs = legs.load()
+
+    parts = [("legs", legs), ("tail", mk(tail)), ("body", mk(body)), ("wing", mk(wing)),
+             ("head", mk(head)), ("beak", mk(beak))]
+    owner = {}
+    for name, px in parts:
+        for y in range(LOGICAL_H):
+            for x in range(LOGICAL_W):
+                if px[x, y]:
+                    owner[(x, y)] = name
+
+    sheen_hi = _mix(spec.sheen_a, (255, 255, 255), 0.25)
+    streak_bands = min(4, spec.streak // 7)
+    eye = (hx + 1.5 * s, hy - 0.6 * s)
+
+    for (x, y), name in owner.items():
+        dx, dy = x + 0.5 - C[0], y + 0.5 - C[1]
+        a = (dx * d[0] + dy * d[1]) / s
+        b = (dx * m[0] + dy * m[1]) / s
+        top = max(0.0, min(1.0, (C[1] + 4.6 * s - y) / (9.2 * s)))     # 1 at the back
+        sheen = _mix(spec.sheen_a, spec.sheen_b, 0.5 + 0.5 * math.sin(a * 0.4))
+        if name == "legs":
+            col = BEAK
+        elif name == "beak":
+            col = BEAK_HI if y < hy + 0.2 * s else BEAK
+        elif name in ("body", "head"):
+            ramp = [DEEP, BASE, MID, _scale(sheen, 0.55 + 0.3 * sheen_k)]
+            col = _pick(ramp, top * (0.5 + 0.5 * sheen_k) * (0.9 if name == "head" else 1.0), x, y)
+            if name == "head" and not blink and abs(x + 0.5 - eye[0]) < 0.6 and abs(y + 0.5 - eye[1]) < 0.6:
+                col = EYE
+        elif name == "tail":
+            t_along = min(1.0, max(0.0, math.hypot(x - B0[0], y - B0[1]) / max(Lt, 1)))
+            sh = _mix(spec.sheen_a, spec.sheen_b, t_along)
+            ramp = [DEEP, BASE, MID, _scale(sh, 0.5 + 0.35 * sheen_k)]
+            col = _pick(ramp, 0.25 + t_along * 0.5 * sheen_k, x, y)
+        else:                                                           # folded wing
+            f = int((b + 6) * 0.9) % 2
+            ramp = [DEEP, BASE if f else DEEP, MID, _scale(sheen, 0.5 + 0.4 * sheen_k)]
+            col = _pick(ramp, 0.2 + 0.5 * max(0.0, -b / 5.0) * (0.5 + 0.5 * sheen_k), x, y)
+            for n_ in range(streak_bands):
+                if abs(a - (1.0 - 3.0 * n_)) < 0.5 and b < 0.5:
+                    col = sheen_hi
+        out[x, y] = col + (255,)
+
+    # a little puff of feathers hides the cut between the two views
+    if k < 2 or k >= R - 1:
+        pp = (k + 1) / 2.0 if k < 2 else 1.0
+        for i in range(6):
+            ang = 2 * math.pi * i / 6 + 0.4
+            r = (4 + 4 * pp) * s
+            px_, py_ = int(C[0] + r * math.cos(ang)), int(C[1] + 3 * s + r * math.sin(ang) * 0.6)
+            if 0 <= px_ < LOGICAL_W and 0 <= py_ < LOGICAL_H:
+                out[px_, py_] = MID + (255,)
+
+    return _finish(img, spec, k)
+
+
 def render_frame(spec: RavenSpec, k: int) -> Image.Image:
     n = spec.frames
     s, wing_l, tail_l, sheen_k = _stage_params(spec.stage)
     st = _state(spec, k)
+    if k % n < _rest_frames(spec):
+        return _perched_frame(spec, k % n, st)
     cx, cy, h, phi = st["x"], st["y"], st["h"], st["phi"]
     fold, yaw, blink = st["fold"], st["yaw"], st["blink"]
     ch, sh = math.cos(h), math.sin(h)
@@ -322,6 +444,13 @@ def render_frame(spec: RavenSpec, k: int) -> Image.Image:
                         col = sheen_hi_a if b % 2 == 0 else sheen_hi_b
             out[x, y] = col + (255,)
 
+    return _finish(img, spec, k)
+
+
+def _finish(img, spec, k):
+    """Outline, sparkles and upscale: shared by flying and perched frames."""
+    out = img.load()
+    n = spec.frames
     # outline: opaque pixels neighbouring transparent ones get a thin rim
     rim = []
     for y in range(LOGICAL_H):
