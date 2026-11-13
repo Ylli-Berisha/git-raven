@@ -138,62 +138,132 @@ def _state(spec: RavenSpec, k: int) -> dict:
     return st
 
 
-BARK_HI = (126, 96, 70)
-BARK = (90, 66, 50)
+BARK_HI = (132, 100, 72)
+BARK = (92, 67, 51)
 BARK_DK = (58, 42, 36)
-LEAF = (74, 116, 90)
-LEAF_DK = (48, 82, 66)
+BARK_BLK = (34, 25, 26)
+MOSS = (84, 120, 82)
+MOSS_DK = (56, 88, 62)
+LEAF = (82, 128, 92)
+LEAF_DK = (50, 88, 68)
+LEAF_HI = (132, 176, 118)
 
 
-def _draw_branch(out) -> None:
-    """A branch seen from above, running left-right through the middle."""
+def _branch_geom(x: float):
+    """(centre y, half thickness) of the branch at column x."""
     cx, cy = LOGICAL_W / 2, LOGICAL_H / 2
-    half = 40
-    top, bot = [], []
-    for i in range(-half, half + 1, 2):
-        wob = 0.9 * math.sin(i * 0.28)
-        taper = 3.4 - 1.4 * (abs(i) / half) ** 2
-        top.append((cx + i, cy + wob - taper))
-        bot.append((cx + i, cy + wob + taper))
+    x0, x1 = cx - 48, cx + 44
+    f = max(0.0, min(1.0, (x - x0) / (x1 - x0)))
+    thick = 1.5 + 3.7 * (1 - f) ** 0.8
+    centre = cy + 1.3 * math.sin((x - cx) * 0.17) + 2.0 * f * f
+    return centre, thick
+
+
+def _branch_top(x: float) -> float:
+    c, t = _branch_geom(x)
+    return c - t
+
+
+def _draw_branch(out, k: int = 0, n: int = FRAMES) -> None:
+    """A tree trunk on the left with a gnarled branch growing out of it."""
+    cx, cy = LOGICAL_W / 2, LOGICAL_H / 2
+    tx0, tx1 = cx - 66, cx - 47
+
+    def put(x, y, col):
+        x, y = int(x), int(y)
+        if 0 <= x < LOGICAL_W and 0 <= y < LOGICAL_H:
+            out[x, y] = col + (255,)
+
+    # ---- trunk: full height, slightly wavy, shaded like a cylinder ----
+    for y in range(LOGICAL_H):
+        left = tx0 + 1.6 * math.sin(y * 0.16) + (0.8 if y > cy else 0)
+        right = tx1 + 1.3 * math.sin(y * 0.21 + 1.0) + 2.2 * max(0.0, (y - cy - 14) / 30)  # root flare
+        for x in range(int(left), int(right) + 1):
+            rel = (x - left) / max(1.0, right - left)
+            t = max(0.0, 1.0 - abs(rel - 0.35) * 1.9)
+            col = _pick([BARK_DK, BARK, BARK_HI], t, x, y)
+            ridge = (x * 3 + int(2 * math.sin(y * 0.3 + x * 0.5))) % 6
+            if ridge == 0:
+                col = BARK_DK
+            if (x * 5 + (y // 7) * 3) % 11 == 0 and (y % 7) < 5:
+                col = BARK_BLK                                   # deep cracks
+            put(x, y, col)
+    # knot hole on the trunk
+    kx, ky = tx0 + 8, cy - 15
+    for dy in range(-4, 5):
+        for dx in range(-3, 4):
+            r = (dx / 3.0) ** 2 + (dy / 4.2) ** 2
+            if r <= 1.0:
+                put(kx + dx, ky + dy, BARK_BLK if r < 0.55 else BARK_DK)
+
+    # ---- branch: thick at the trunk, tapering and drooping a little ----
+    x_start, x_end = int(tx1 - 4), int(cx + 44)
+    for x in range(x_start, x_end + 1):
+        c, th = _branch_geom(x)
+        # flare where the branch joins the trunk
+        flare = 3.5 * max(0.0, 1 - (x - x_start) / 9.0) ** 2
+        y_top, y_bot = c - th - flare, c + th + flare * 0.5
+        for y in range(int(y_top), int(y_bot) + 1):
+            rel = (y - y_top) / max(1.0, y_bot - y_top)
+            col = _pick([BARK_HI, BARK, BARK_DK], rel, x, y)
+            if (x * 7 + y * 13) % 11 == 0:
+                col = BARK_DK                                    # bark flecks
+            if (x // 5) % 3 == 0 and (x % 5) == 0 and rel > 0.25:
+                col = BARK_BLK                                   # ring cracks across the branch
+            put(x, y, col)
+    # moss on the top of the branch near the trunk and on the trunk's shaded side
+    for x in range(x_start + 4, x_start + 30):
+        top = _branch_top(x)
+        if (x * 17) % 5 < 3:
+            put(x, top + 0.5, MOSS if (x % 2) else MOSS_DK)
+            if (x * 11) % 4 == 0:
+                put(x, top - 0.5, MOSS)
+    for y in range(int(cy + 4), int(cy + 20)):
+        for x in range(int(tx0 + 1), int(tx0 + 5)):
+            if (x * 5 + y * 3) % 7 < 2:
+                put(x, y, MOSS_DK if (x + y) % 2 else MOSS)
+
+    # ---- twigs ----
     m = Image.new("L", (LOGICAL_W, LOGICAL_H), 0)
     d = ImageDraw.Draw(m)
-    d.polygon(top + bot[::-1], fill=255)
-    # twigs
-    d.line([(cx + 16, cy - 3), (cx + 22, cy - 9), (cx + 27, cy - 11)], fill=255, width=1)
-    d.line([(cx - 20, cy + 3), (cx - 25, cy + 8)], fill=255, width=1)
+    twigs = [
+        [(cx + 27, _branch_top(cx + 27) + 1), (cx + 31, cy - 9), (cx + 37, cy - 15)],
+        [(cx + 31, cy - 9), (cx + 27, cy - 16)],
+        [(cx + 39, _branch_top(cx + 39) + 1), (cx + 43, cy - 5), (cx + 48, cy - 8)],
+        [(cx - 16, _branch_geom(cx - 16)[0] + 2), (cx - 21, cy + 9), (cx - 22, cy + 13)],
+        [(cx + 43, _branch_geom(cx + 43)[0]), (cx + 49, cy + 7)],
+    ]
+    for t in twigs:
+        d.line(t, fill=255, width=1)
     px = m.load()
     for y in range(LOGICAL_H):
         for x in range(LOGICAL_W):
-            if not px[x, y]:
-                continue
-            rel = (y - (cy - 4.5)) / 9.0                  # 0 top .. 1 bottom: top lit
-            level = [BARK_HI, BARK, BARK_DK]
-            col = _pick(level, max(0.0, min(1.0, rel)), x, y)
-            if (x * 7 + y * 13) % 11 == 0:
-                col = BARK_DK                              # bark flecks
-            out[x, y] = col + (255,)
-    # leaves on the twig ends
-    for lx, ly, c in ((cx + 27, cy - 11, LEAF), (cx + 25, cy - 13, LEAF_DK),
-                      (cx + 29, cy - 12, LEAF_DK), (cx - 25, cy + 8, LEAF),
-                      (cx - 27, cy + 9, LEAF_DK)):
-        for dx in (0, 1):
-            for dy in (0, 1):
-                X, Y = int(lx) + dx, int(ly) + dy
-                if 0 <= X < LOGICAL_W and 0 <= Y < LOGICAL_H:
-                    out[X, Y] = c + (255,)
+            if px[x, y]:
+                put(x, y, BARK if (x + y) % 3 else BARK_HI)
+
+    # ---- leaf clusters that sway a little ----
+    clusters = [(cx + 37, cy - 15, 0.0), (cx + 27, cy - 16, 1.3), (cx + 48, cy - 8, 2.1),
+                (cx - 22, cy + 13, 3.0), (cx + 49, cy + 7, 4.2)]
+    for lx, ly, ph in clusters:
+        sway = round(0.8 * math.sin(2 * math.pi * 2 * k / n + ph))
+        for ox, oy, c in ((0, 0, LEAF), (-2, -1, LEAF_DK), (2, -1, LEAF_HI), (-1, 2, LEAF_DK),
+                          (2, 2, LEAF), (-3, 1, LEAF)):
+            for dx in (0, 1):
+                for dy in (0, 1):
+                    put(lx + ox + dx + (sway if oy < 1 else 0), ly + oy + dy, c)
 
 
 def _perched_frame(spec: RavenSpec, k: int, st: dict) -> Image.Image:
     """Side-view raven sitting on the branch, facing right."""
     s, _, tail_l, sheen_k = _stage_params(spec.stage)
-    s = min(s, 1.9)
+    s = min(s, 1.6)                                # keep tall adults inside the frame
     R = _rest_frames(spec)
     img = Image.new("RGBA", (LOGICAL_W, LOGICAL_H), (0, 0, 0, 0))
     out = img.load()
-    _draw_branch(out)
+    _draw_branch(out, k, spec.frames)
 
     cx = LOGICAL_W / 2
-    fy = LOGICAL_H / 2 - 3.3                       # top surface of the branch
+    fy = _branch_top(cx) + 0.3                      # top surface of the branch
     yaw, blink, wag = st["yaw"], st["blink"], st["wag"]
     crouch = max(0.0, (k - (R - 4)) / 4.0)         # last frames: lean in to jump
     th = math.radians(30) + 0.25 * crouch
@@ -393,7 +463,7 @@ def render_frame(spec: RavenSpec, k: int) -> Image.Image:
 
     img = Image.new("RGBA", (LOGICAL_W, LOGICAL_H), (0, 0, 0, 0))
     out = img.load()
-    _draw_branch(out)
+    _draw_branch(out, k, n)
 
     def local(x, y):
         dx, dy = x + 0.5 - cx, y + 0.5 - cy

@@ -12,7 +12,7 @@ A pixel-art raven drawn from your GitHub activity, as a looping GIF for your pro
 | Yesterday's activity | How it spends its loop: a quiet day means slow wingbeats and a long rest on the branch, a busy day means fast wingbeats and a short rest |
 | Stars on your repos | Shiny things twinkling around it, because ravens collect them |
 
-Each loop the raven sits on a branch in side view (looking around, blinking, twitching its tail), takes off, flies a figure-eight and lands again.
+Each loop the raven sits on a branch of an old tree in side view (looking around, blinking, twitching its tail), takes off, flies a figure-eight and lands again.
 
 Growth thresholds: 0, 150, 500, 1,500, 4,000 and 10,000 contributions.
 
