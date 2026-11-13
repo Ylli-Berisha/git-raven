@@ -95,46 +95,77 @@ def _rest_frames(spec: RavenSpec) -> int:
     return 64 if y <= 0 else 48 if y < 4 else 34
 
 
+def _lerp(a, b, t):
+    return a + (b - a) * t
+
+
+def _side_scale(stage: int) -> float:
+    """Size of the side-view raven; capped so even adults fit in the strip."""
+    return (1.2, 1.4, 1.55, 1.65, 1.75, 1.8)[max(0, min(5, stage))]
+
+
 def _state(spec: RavenSpec, k: int) -> dict:
     """Where the raven is and what it is doing at frame k.
 
-    Loop: rest on the branch -> take off -> one figure-eight -> land -> rest.
+    Loop: rest on the branch -> take off -> one big swoop -> land -> rest.
+    The same side-view sprite is used throughout, so there is no cut.
     """
     n = spec.frames
     k %= n
     R = _rest_frames(spec)
     F = n - R
-    cxm, cym = LOGICAL_W / 2, LOGICAL_H / 2
-    st = dict(x=cxm, y=cym, h=0.0, phi=0.0, fold=1.0, yaw=0.0, blink=False, wag=0.0)
+    s = _side_scale(spec.stage)
+    cx, cy = LOGICAL_W / 2, LOGICAL_H / 2
+    base_y = _branch_top(cx) + 0.3 - 7.8 * s              # body centre when perched
+    C0 = (cx - 0.5 * s, base_y)
+    rest_pitch = math.radians(30)
+    st = dict(x=C0[0], y=C0[1], pitch=rest_pitch, face=1.0, fold=1.0, alpha=0.0,
+              yaw=0.0, blink=False, wag=0.0, legs=True)
 
-    if k < R:                                   # resting on the branch
+    if k < R:                                              # sitting on the branch
         t = k / R
-        st["yaw"] = 0.65 * math.sin(2 * math.pi * 1.5 * t)       # looks around
+        crouch = max(0.0, (k - (R - 4)) / 4.0)             # last frames: lean in to jump
+        st["yaw"] = 0.65 * math.sin(2 * math.pi * 1.5 * t)
         st["blink"] = any(c < t < c + 3.0 / R for c in (0.42, 0.8))
-        st["wag"] = 0.22 * math.sin(2 * math.pi * 2 * t)          # tail twitch
+        st["wag"] = 0.22 * math.sin(2 * math.pi * 2 * t)
+        st["pitch"] = rest_pitch + 0.25 * crouch
+        st["y"] = base_y - 0.12 * s * math.sin(2 * math.pi * 3 * t) + 1.3 * s * crouch
         return st
 
-    u = (k - R) / F                             # 0..1 through the flight
-    amp_x = max(6.0, (LOGICAL_W / 2 - 4) * (0.85 if spec.yesterday <= 0 else 1.0))
-    amp_y = max(6.0, (LOGICAL_H / 2 - 4) * (0.85 if spec.yesterday <= 0 else 1.0))
-    ease = u - math.sin(2 * math.pi * u) / (2 * math.pi)          # slow at both ends
-    a = 2 * math.pi * ease
-    st["x"] = cxm + amp_x * math.sin(a)
-    st["y"] = cym + amp_y * math.sin(2 * a)
+    u = (k - R) / F
+    roam = 0.85 if spec.yesterday <= 0 else 1.0
+    amp_x = max(6.0, (LOGICAL_W / 2 - 20) * roam)       # turn around inside the frame
+    amp_y = max(6.0, (LOGICAL_H / 2 - 7) * roam)
 
-    heading = math.atan2(2 * amp_y * math.cos(2 * a), amp_x * math.cos(a))
-    near_end = _smooth(min(u, 1 - u) / 0.16)
-    st["h"] = _angle_lerp(0.0, heading, near_end)                 # face along the branch
+    def path(uu):
+        ease = uu - math.sin(2 * math.pi * uu) / (2 * math.pi)     # slow at both ends
+        a_ = 2 * math.pi * ease
+        w = _smooth(min(uu, 1 - uu) / 0.2)                          # 0 at take-off / landing
+        px = cx + amp_x * math.sin(a_)
+        py = cy + amp_y * math.sin(2 * a_)
+        return _lerp(C0[0], px, w), _lerp(C0[1], py, w)
 
-    st["fold"] = max(1 - _smooth(u / 0.07), _smooth((u - 0.90) / 0.10))
-    y = spec.yesterday
-    flaps = 5 if y <= 0 else 7 if y < 4 else 9 if y < 10 else 11
-    th = 2 * math.pi * flaps * u
-    flare = 1 + 0.25 * (1 - near_end)                              # big beats at take-off / landing
-    st["phi"] = 0.95 * flare * (math.sin(th) - 0.18 * math.sin(2 * th))
-    st["phi"] = max(-1.15, min(1.15, st["phi"]))
-    st["yaw"] = 0.0
+    x, y = path(u)
+    x0, y0 = path(max(0.0, u - 0.003))
+    x1, y1 = path(min(1.0, u + 0.003))
+    vx, vy = x1 - x0, y1 - y0
+    near = _smooth(min(u, 1 - u) / 0.14)
+    face_fly = max(-1.0, min(1.0, vx / (0.0035 * amp_x)))           # flips over in a frame or two
+    pitch_fly = 0.7 * max(-0.8, min(0.8, math.atan2(-vy, abs(vx) + 1e-6)))
+    st["face"] = _lerp(1.0, face_fly, near)
+    st["pitch"] = _lerp(rest_pitch, pitch_fly, near)
+    st["fold"] = max(1 - _smooth(u / 0.09), _smooth((u - 0.88) / 0.12))
+
+    fl = 5 if spec.yesterday <= 0 else 7 if spec.yesterday < 4 else 9 if spec.yesterday < 10 else 11
+    th = 2 * math.pi * fl * u
+    flare = 1 + 0.25 * (1 - near)
+    alpha = 0.95 * flare * (math.sin(th) - 0.18 * math.sin(2 * th))
+    st["alpha"] = max(-1.15, min(1.15, alpha))
+    hop = 1.3 * s * (1 - _smooth(u / 0.05))                         # springs off the branch
+    st["x"] = x
+    st["y"] = y + hop + 0.9 * s * st["alpha"] * (1 - st["fold"])    # body lifts on the downstroke
     st["wag"] = 0.12 * math.sin(2 * math.pi * 3 * u)
+    st["legs"] = st["fold"] > 0.9
     return st
 
 
@@ -253,26 +284,25 @@ def _draw_branch(out, k: int = 0, n: int = FRAMES) -> None:
                     put(lx + ox + dx + (sway if oy < 1 else 0), ly + oy + dy, c)
 
 
-def _perched_frame(spec: RavenSpec, k: int, st: dict) -> Image.Image:
-    """Side-view raven sitting on the branch, facing right."""
-    s, _, tail_l, sheen_k = _stage_params(spec.stage)
-    s = min(s, 1.6)                                # keep tall adults inside the frame
-    R = _rest_frames(spec)
-    img = Image.new("RGBA", (LOGICAL_W, LOGICAL_H), (0, 0, 0, 0))
-    out = img.load()
-    _draw_branch(out, k, spec.frames)
+def _norm(v):
+    m = math.hypot(v[0], v[1]) or 1.0
+    return (v[0] / m, v[1] / m)
 
-    cx = LOGICAL_W / 2
-    fy = _branch_top(cx) + 0.3                      # top surface of the branch
+
+def _draw_bird(spec: RavenSpec, k: int, st: dict) -> Image.Image:
+    """The raven in side view, facing right, on a transparent layer."""
+    s = _side_scale(spec.stage)
+    _, wing_l, tail_l, sheen_k = _stage_params(spec.stage)
+    bird = Image.new("RGBA", (LOGICAL_W, LOGICAL_H), (0, 0, 0, 0))
+    out = bird.load()
+
+    th, fold, alpha = st["pitch"], st["fold"], st["alpha"]
     yaw, blink, wag = st["yaw"], st["blink"], st["wag"]
-    crouch = max(0.0, (k - (R - 4)) / 4.0)         # last frames: lean in to jump
-    th = math.radians(30) + 0.25 * crouch
-    d = (math.cos(th), -math.sin(th))
-    m = (math.sin(th), math.cos(th))
-    breathe = 0.03 * math.sin(2 * math.pi * 3 * k / R)
-    C = (cx - 0.5 * s, fy - (7.8 + breathe * 4) * s + 1.3 * s * crouch)
+    d = (math.cos(th), -math.sin(th))               # along the body, towards the head
+    m = (math.sin(th), math.cos(th))                # across the body, towards the belly
+    C = (st["x"], st["y"])
 
-    def W(a, b):                                    # body-local -> canvas
+    def W(a, b):                                     # body-local -> canvas
         return (C[0] + (d[0] * a + m[0] * b) * s, C[1] + (d[1] * a + m[1] * b) * s)
 
     def circle(cx_, cy_, r, steps=24):
@@ -282,15 +312,15 @@ def _perched_frame(spec: RavenSpec, k: int, st: dict) -> Image.Image:
     body = [W(7.8 * math.cos(2 * math.pi * i / 28), 4.6 * math.sin(2 * math.pi * i / 28))
             for i in range(28)]
     hx = C[0] + d[0] * 8.2 * s + 1.8 * s * yaw
-    hy = C[1] + d[1] * 8.2 * s - 1.4 * s - 0.5 * s * abs(yaw) + 1.0 * s * crouch
+    hy = C[1] + d[1] * 8.2 * s - 1.4 * s - 0.5 * s * abs(yaw)
     head = circle(hx, hy, 3.1 * s)
-    tilt = yaw * 0.35 + 0.15
+    tilt = yaw * 0.35 + 0.15 - 0.4 * th * (1 - fold) * 0
     ct, stl = math.cos(tilt), math.sin(tilt)
     beak = [(hx + (px * ct - py * stl) * s, hy + (px * stl + py * ct) * s)
             for px, py in [(2.4, -1.7), (6.4, -0.6), (7.9, 1.2), (6.0, 1.0), (2.6, 1.9)]]
 
-    # tail: hangs down and back behind the branch
-    ph = 0.8 + 0.5 * wag
+    # tail: hangs behind the branch when perched, streams out behind in flight
+    ph = th + 0.28 * fold + 0.5 * wag
     td = (-math.cos(ph), math.sin(ph))
     tp = (math.sin(ph), math.cos(ph))
     B0 = W(-6.0, 0.4)
@@ -300,26 +330,60 @@ def _perched_frame(spec: RavenSpec, k: int, st: dict) -> Image.Image:
     for f in (-1.0, -0.5, 0.0, 0.5, 1.0):
         w = 2.7 * s * f
         back = 1.0 * s * abs(f) ** 1.6
-        tail.append((E[0] + tp[0] * w + td[0] * -back, E[1] + tp[1] * w + td[1] * -back))
+        tail.append((E[0] + tp[0] * w - td[0] * back, E[1] + tp[1] * w - td[1] * back))
     tail.append((B0[0] + tp[0] * 1.9 * s, B0[1] + tp[1] * 1.9 * s))
 
-    wing = [W(a, b) for a, b in [(4.5, -1.2), (2.0, -4.2), (-2.5, -4.6), (-7.5, -3.2),
-                                  (-13.0, 0.8), (-8.0, 2.0), (-2.0, 2.6), (3.0, 1.8)]]
+    # wings: a leaf shape on an axis that swings from "up" through "down" to "folded back"
+    L = wing_l * s * 1.15
+    w_fold = _norm((-d[0], -d[1]))
+    n_fold = (-w_fold[1], w_fold[0])
+
+    def wing(S, a_eff):
+        up = a_eff >= 0
+        w_flap = (-0.30, -0.95) if up else (-0.18, 0.98)
+        sg = 1 if up else -1
+        n_flap = (-w_flap[1] * sg, w_flap[0] * sg)
+        w = _norm((_lerp(w_flap[0], w_fold[0], fold), _lerp(w_flap[1], w_fold[1], fold)))
+        n = _norm((_lerp(n_flap[0], n_fold[0], fold), _lerp(n_flap[1], n_fold[1], fold)))
+        ell = _lerp(max(5.0 * s, L * abs(math.sin(a_eff))), 13.0 * s, fold)
+        lead, trail = [], []
+        for i in range(10):
+            t = i / 9
+            off = 1.6 * s * (1 - t) ** 1.2
+            lead.append((S[0] + w[0] * t * ell + n[0] * off, S[1] + w[1] * t * ell + n[1] * off))
+        for i in range(13):
+            t = 1 - i / 12
+            width = _lerp(6.8 * (1 - 0.62 * t), 3.0 * (1 - 0.3 * t), fold) * s
+            if 0.25 < t < 0.95 and i % 2 == 1:
+                width *= 0.78                                      # scalloped primaries
+            trail.append((S[0] + w[0] * t * ell - n[0] * width, S[1] + w[1] * t * ell - n[1] * width))
+        return lead + trail, (S, w, n, ell)
+
+    S_near = W(3.0, -2.4)
+    wing_near, geo_near = wing(S_near, alpha)
+    wing_far = geo_far = None
+    if fold < 0.7:
+        S_far = W(1.2, -2.8)
+        wing_far, geo_far = wing(S_far, alpha * 0.75 - 0.22)
 
     def mk(pts):
         mm = Image.new("L", (LOGICAL_W, LOGICAL_H), 0)
         ImageDraw.Draw(mm).polygon(pts, fill=255)
         return mm.load()
 
-    legw = max(1, round(0.8 * s))
-    legs = Image.new("L", (LOGICAL_W, LOGICAL_H), 0)
-    ld = ImageDraw.Draw(legs)
-    for lx in (C[0] + 0.3 * s, C[0] + 2.8 * s):
-        ld.rectangle([lx, C[1] + 3.2 * s, lx + legw - 1, fy + 0.6], fill=255)
-    legs = legs.load()
-
-    parts = [("legs", legs), ("tail", mk(tail)), ("body", mk(body)), ("wing", mk(wing)),
-             ("head", mk(head)), ("beak", mk(beak))]
+    parts = []
+    if st["legs"]:
+        fy = _branch_top(LOGICAL_W / 2) + 0.3
+        legw = max(1, round(0.8 * s))
+        legs = Image.new("L", (LOGICAL_W, LOGICAL_H), 0)
+        ld = ImageDraw.Draw(legs)
+        for lx in (C[0] + 0.3 * s, C[0] + 2.8 * s):
+            ld.rectangle([lx, C[1] + 3.2 * s, lx + legw - 1, max(C[1] + 3.5 * s, fy + 0.6)], fill=255)
+        parts.append(("legs", legs.load()))
+    if wing_far:
+        parts.append(("wingfar", mk(wing_far)))
+    parts += [("tail", mk(tail)), ("body", mk(body)), ("wing", mk(wing_near)),
+              ("head", mk(head)), ("beak", mk(beak))]
     owner = {}
     for name, px in parts:
         for y in range(LOGICAL_H):
@@ -334,8 +398,7 @@ def _perched_frame(spec: RavenSpec, k: int, st: dict) -> Image.Image:
     for (x, y), name in owner.items():
         dx, dy = x + 0.5 - C[0], y + 0.5 - C[1]
         a = (dx * d[0] + dy * d[1]) / s
-        b = (dx * m[0] + dy * m[1]) / s
-        top = max(0.0, min(1.0, (C[1] + 4.6 * s - y) / (9.2 * s)))     # 1 at the back
+        top = max(0.0, min(1.0, (C[1] + 4.6 * s - y) / (9.2 * s)))
         sheen = _mix(spec.sheen_a, spec.sheen_b, 0.5 + 0.5 * math.sin(a * 0.4))
         if name == "legs":
             col = BEAK
@@ -351,169 +414,45 @@ def _perched_frame(spec: RavenSpec, k: int, st: dict) -> Image.Image:
             sh = _mix(spec.sheen_a, spec.sheen_b, t_along)
             ramp = [DEEP, BASE, MID, _scale(sh, 0.5 + 0.35 * sheen_k)]
             col = _pick(ramp, 0.25 + t_along * 0.5 * sheen_k, x, y)
-        else:                                                           # folded wing
-            f = int((b + 6) * 0.9) % 2
-            ramp = [DEEP, BASE if f else DEEP, MID, _scale(sheen, 0.5 + 0.4 * sheen_k)]
-            col = _pick(ramp, 0.2 + 0.5 * max(0.0, -b / 5.0) * (0.5 + 0.5 * sheen_k), x, y)
-            for n_ in range(streak_bands):
-                if abs(a - (1.0 - 3.0 * n_)) < 0.5 and b < 0.5:
-                    col = sheen_hi
+        else:                                                           # wings
+            S_, w_, n_, ell_ = geo_near if name == "wing" else geo_far
+            rx, ry = x + 0.5 - S_[0], y + 0.5 - S_[1]
+            along = (rx * w_[0] + ry * w_[1]) / max(ell_, 1.0)
+            chord = (rx * n_[0] + ry * n_[1]) / s
+            f = int((chord + 8) * 0.9) % 2
+            if name == "wingfar":
+                col = _pick([DEEP, DEEP, BASE], 0.4 + 0.3 * (1 - along), x, y)
+            else:
+                ramp = [DEEP, BASE if f else DEEP, MID, _scale(sheen, 0.5 + 0.4 * sheen_k)]
+                lit = max(0.0, min(1.0, 0.34 + 0.5 * (1 - along) * (0.5 + 0.5 * sheen_k)
+                                   + (0.12 if chord > 0 else 0) + 0.12 * alpha * (1 - fold)))
+                col = _pick(ramp, lit, x, y)
+                for b_ in range(streak_bands):
+                    if abs(along * ell_ / s - (3.0 + 3.0 * b_)) < 0.5 and chord > -2.5:
+                        col = sheen_hi
+        if name == "wing" and fold < 0.85:
+            edge = any(owner.get((x + dx, y + dy)) != "wing"
+                       for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)))
+            if edge:
+                col = _mix(col, OUTLINE, 0.6 * (1 - fold))
         out[x, y] = col + (255,)
+    return bird
 
-    # a little puff of feathers hides the cut between the two views
-    if k < 2 or k >= R - 1:
-        pp = (k + 1) / 2.0 if k < 2 else 1.0
-        for i in range(6):
-            ang = 2 * math.pi * i / 6 + 0.4
-            r = (4 + 4 * pp) * s
-            px_, py_ = int(C[0] + r * math.cos(ang)), int(C[1] + 3 * s + r * math.sin(ang) * 0.6)
-            if 0 <= px_ < LOGICAL_W and 0 <= py_ < LOGICAL_H:
-                out[px_, py_] = MID + (255,)
 
-    return _finish(img, spec, k)
+def _turn(bird: Image.Image, cx: float, face: float) -> Image.Image:
+    """Flip / squash the bird horizontally about its centre (a turn-around)."""
+    f = face if abs(face) >= 0.18 else (0.18 if face >= 0 else -0.18)
+    return bird.transform(bird.size, Image.AFFINE, (1 / f, 0, cx - cx / f, 0, 1, 0), Image.NEAREST)
 
 
 def render_frame(spec: RavenSpec, k: int) -> Image.Image:
-    n = spec.frames
-    s, wing_l, tail_l, sheen_k = _stage_params(spec.stage)
     st = _state(spec, k)
-    if k % n < _rest_frames(spec):
-        return _perched_frame(spec, k % n, st)
-    cx, cy, h, phi = st["x"], st["y"], st["h"], st["phi"]
-    fold, yaw, blink = st["fold"], st["yaw"], st["blink"]
-    ch, sh = math.cos(h), math.sin(h)
-
-    def to_world(pts):
-        return [(cx + u * ch - v * sh, cy + u * sh + v * ch) for u, v in pts]
-
-    def mask(pts):
-        m = Image.new("L", (LOGICAL_W, LOGICAL_H), 0)
-        ImageDraw.Draw(m).polygon(to_world(pts), fill=255)
-        return m
-
-    def ellipse(a, b, u0=0.0, v0=0.0, steps=28):
-        return [(u0 + a * math.cos(2 * math.pi * i / steps),
-                 v0 + b * math.sin(2 * math.pi * i / steps))
-                for i in range(steps)]
-
-    # ---- geometry in local (u forward, v right) units, scaled by s ----
-    def head_rot(pts):                      # turn the head about the neck
-        cyw, syw = math.cos(yaw), math.sin(yaw)
-        return [(6.0 + (u - 6.0) * cyw - v * syw, (u - 6.0) * syw + v * cyw) for u, v in pts]
-
-    body = mask([(u * s, v * s) for u, v in ellipse(7.2, 3.6, 0.0)])
-    head = mask([(u * s, v * s) for u, v in head_rot(ellipse(3.3, 3.0, 8.0))])
-    beak = mask([(u * s, v * s) for u, v in head_rot(
-                 [(10.0, -1.7), (13.0, -1.0), (15.2, -0.25), (15.2, 0.25), (13.0, 1.0), (10.0, 1.7)])])
-    eyes = head_rot([(8.9, -1.25), (8.9, 1.25)])
-
-    wag = st["wag"]
-    tl = tail_l
-    tail_pts = [(-4.0, -1.8)]
-    feathers = 5
-    for i in range(feathers + 1):          # scalloped, wedge-shaped end
-        f = -1.0 + 2.0 * i / feathers
-        reach = tl - 1.3 * abs(f) ** 2.2
-        tail_pts.append((-4.0 - reach, f * (2.4 + 2.6 * (tl / 15.0)) + wag * tl * 0.6))
-        if i < feathers:
-            f2 = -1.0 + 2.0 * (i + 0.5) / feathers
-            tail_pts.append((-4.0 - reach + 1.3, f2 * (2.4 + 2.6 * (tl / 15.0)) + wag * tl * 0.6))
-    tail_pts.append((-4.0, 1.8))
-    tail = mask([(u * s, v * s) for u, v in tail_pts])
-
-    wings = {}
-    cphi = math.cos(phi)
-    sweep = math.sin(phi) * 4.5
-    for sgn in (-1, 1):
-        L = max(4.8, wing_l * cphi * (1 - 0.8 * fold))
-        tip_u = (-1.5 - sweep) * (1 - fold) + (-8.5) * fold          # tuck back when perched
-        lead, trail = [], []
-        steps = 9
-        for i in range(steps + 1):
-            t = i / steps
-            lead.append((4.2 - (4.2 - tip_u) * t ** 1.5, 2.4 + (L - 2.4) * t))
-        tn = 14
-        for i in range(tn + 1):
-            t = i / tn                      # 0 = tip, 1 = body
-            v = L - (L - 3.2 * cphi) * t
-            u = (tip_u - 2.6) + (-6.2 - (tip_u - 2.6)) * t ** 0.9
-            if t < 0.78 and i % 2 == 1:     # primaries: scalloped notches
-                u += 1.7
-            trail.append((u, v))
-        pts = lead + trail
-        wings[sgn] = mask([(u * s, v * sgn * s) for u, v in pts]), L
-
-    if fold > 0.5:                          # folded wings lie over the body
-        layers = [("tail", tail), ("body", body), ("wing-1", wings[-1][0]),
-                  ("wing1", wings[1][0]), ("head", head), ("beak", beak)]
-    else:
-        layers = [("tail", tail), ("wing-1", wings[-1][0]), ("wing1", wings[1][0]),
-                  ("body", body), ("head", head), ("beak", beak)]
-
-    owner = [[None] * LOGICAL_W for _ in range(LOGICAL_H)]
-    for name, m in layers:
-        px = m.load()
-        for y in range(LOGICAL_H):
-            for x in range(LOGICAL_W):
-                if px[x, y]:
-                    owner[y][x] = name
-
-    sheen_hi_a = _mix(spec.sheen_a, (255, 255, 255), 0.25)
-    sheen_hi_b = _mix(spec.sheen_b, (255, 255, 255), 0.25)
-
     img = Image.new("RGBA", (LOGICAL_W, LOGICAL_H), (0, 0, 0, 0))
-    out = img.load()
-    _draw_branch(out, k, n)
-
-    def local(x, y):
-        dx, dy = x + 0.5 - cx, y + 0.5 - cy
-        return (dx * ch + dy * sh) / s, (-dx * sh + dy * ch) / s
-
-    streak_bands = min(4, spec.streak // 7)
-
-    for y in range(LOGICAL_H):
-        for x in range(LOGICAL_W):
-            name = owner[y][x]
-            if name is None:
-                continue
-            u, v = local(x, y)
-            light = 0.5 + 0.5 * max(-1.0, min(1.0, (-(x - cx) - (y - cy)) / (14 * s)))
-            if name == "beak":
-                col = BEAK_HI if abs(v) < 0.35 else BEAK
-            elif name in ("body", "head"):
-                sheen = _mix(spec.sheen_a, spec.sheen_b, 0.5 + 0.5 * math.sin(u * 0.5))
-                ramp = [DEEP, BASE, MID, _scale(sheen, 0.55 + 0.3 * sheen_k)]
-                t = light * (0.55 + 0.45 * sheen_k) if name == "body" else light * 0.8
-                col = _pick(ramp, t, x, y)
-                if name == "head":
-                    # eyes
-                    if not blink and any(abs(v - ev) < 0.45 and abs(u - eu) < 0.6
-                                         for eu, ev in eyes):
-                        col = EYE
-            elif name == "tail":
-                t_along = min(1.0, max(0.0, (-u - 5.0) / tail_l))
-                stripe = int((v + 6.0) * 1.2) % 2
-                sheen = _mix(spec.sheen_a, spec.sheen_b, t_along)
-                ramp = [DEEP, BASE if stripe else DEEP, MID,
-                        _scale(sheen, 0.5 + 0.35 * sheen_k)]
-                col = _pick(ramp, light * 0.5 + t_along * 0.35 * sheen_k, x, y)
-            else:
-                sgn = -1 if name == "wing-1" else 1
-                L = wings[sgn][1]
-                av = abs(v)
-                chord = (u + 6.0) / 14.0           # 0 trailing .. 1 leading
-                f = int(av * 0.9) % 2              # feather banding
-                w = max(0.0, min(1.0, chord))
-                sheen = _mix(spec.sheen_a, spec.sheen_b, min(1.0, av / max(L, 1)))
-                ramp = [DEEP, BASE if f else DEEP, MID,
-                        _scale(sheen, 0.5 + 0.4 * sheen_k)]
-                lit = max(0.0, min(1.0, light + 0.2 * phi))    # upstroke catches the light
-                col = _pick(ramp, lit * 0.35 + w * 0.55 * (0.5 + 0.5 * sheen_k), x, y)
-                for b in range(streak_bands):
-                    if abs(av - (5.0 + 3.0 * b)) < 0.55 and w > 0.35:
-                        col = sheen_hi_a if b % 2 == 0 else sheen_hi_b
-            out[x, y] = col + (255,)
-
+    _draw_branch(img.load(), k % spec.frames, spec.frames)
+    bird = _draw_bird(spec, k, st)
+    if abs(st["face"] - 1.0) > 1e-6:
+        bird = _turn(bird, st["x"], st["face"])
+    img.alpha_composite(bird)
     return _finish(img, spec, k)
 
 

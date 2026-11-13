@@ -44,3 +44,21 @@ def test_rest_pose_animates_and_loops():
     R = 34                                              # rest length for a busy day
     assert render_frame(spec, 0).tobytes() != render_frame(spec, R // 2).tobytes()
     assert render_frame(spec, 0).tobytes() == render_frame(spec, spec.frames).tobytes()
+
+
+def test_no_view_switch_at_landing_and_takeoff():
+    """The bird is the same side-view sprite throughout, so frames either side of the
+    landing and take-off change only a little (no pop between two different drawings)."""
+    from PIL import ImageChops
+    spec = RavenSpec(stage=2, yesterday=6)
+    n, R = spec.frames, 34
+
+    def changed(a, b):
+        d = ImageChops.difference(render_frame(spec, a).convert("RGBA"),
+                                  render_frame(spec, b).convert("RGBA"))
+        return sum(1 for px in d.getdata() if px != (0, 0, 0, 0))
+
+    seam = changed(n - 1, 0)
+    typical = max(changed(k, k + 1) for k in range(R + 10, R + 40))
+    assert seam < typical * 1.2
+    assert changed(R - 1, R) < typical * 1.2
