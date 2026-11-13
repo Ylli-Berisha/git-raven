@@ -1,6 +1,6 @@
 """Pixel-art raven renderer.
 
-Draws a top-down raven on a 96x96 logical grid (upscaled 4x to 384x384),
+Draws a top-down raven on a 144x96 logical grid (upscaled 4x to 576x384),
 with dithered shading, a thin outline and a transparent background.
 """
 from __future__ import annotations
@@ -10,7 +10,8 @@ from dataclasses import dataclass, field
 
 from PIL import Image, ImageDraw
 
-LOGICAL = 96
+LOGICAL_W = 144   # canvas width in logical pixels (576px at 4x)
+LOGICAL_H = 96    # canvas height in logical pixels (384px at 4x)
 SCALE = 4
 FRAMES = 120
 FRAME_MS = 70
@@ -82,16 +83,17 @@ def _path(spec: RavenSpec, k: int, n: int):
     """Position (x, y) and heading at frame k of n on a closed figure-eight."""
     # Roam nearly the whole box: the body may reach the edges and wings,
     # head or tail can slip past them for a moment before it swings back.
-    room = LOGICAL / 2 - 4
+    room_x = LOGICAL_W / 2 - 4
+    room_y = LOGICAL_H / 2 - 4
     y = spec.yesterday
     roam = 0.85 if y <= 0 else 0.93 if y < 4 else 1.0
-    amp_x = max(6.0, room * roam)
-    amp_y = max(6.0, room * roam)
+    amp_x = max(6.0, room_x * roam)
+    amp_y = max(6.0, room_y * roam)
 
     def pos(t):
         a = 2 * math.pi * t / n
-        return (LOGICAL / 2 + amp_x * math.sin(a),
-                LOGICAL / 2 + amp_y * math.sin(2 * a))
+        return (LOGICAL_W / 2 + amp_x * math.sin(a),
+                LOGICAL_H / 2 + amp_y * math.sin(2 * a))
 
     x0, y0 = pos(k)
     x1, y1 = pos(k + 0.25)
@@ -117,7 +119,7 @@ def render_frame(spec: RavenSpec, k: int) -> Image.Image:
         return [(cx + u * ch - v * sh, cy + u * sh + v * ch) for u, v in pts]
 
     def mask(pts):
-        m = Image.new("L", (LOGICAL, LOGICAL), 0)
+        m = Image.new("L", (LOGICAL_W, LOGICAL_H), 0)
         ImageDraw.Draw(m).polygon(to_world(pts), fill=255)
         return m
 
@@ -171,18 +173,18 @@ def render_frame(spec: RavenSpec, k: int) -> Image.Image:
     layers = [("tail", tail), ("wing-1", wings[-1][0]), ("wing1", wings[1][0]),
               ("body", body), ("head", head), ("beak", beak)]
 
-    owner = [[None] * LOGICAL for _ in range(LOGICAL)]
+    owner = [[None] * LOGICAL_W for _ in range(LOGICAL_H)]
     for name, m in layers:
         px = m.load()
-        for y in range(LOGICAL):
-            for x in range(LOGICAL):
+        for y in range(LOGICAL_H):
+            for x in range(LOGICAL_W):
                 if px[x, y]:
                     owner[y][x] = name
 
     sheen_hi_a = _mix(spec.sheen_a, (255, 255, 255), 0.25)
     sheen_hi_b = _mix(spec.sheen_b, (255, 255, 255), 0.25)
 
-    img = Image.new("RGBA", (LOGICAL, LOGICAL), (0, 0, 0, 0))
+    img = Image.new("RGBA", (LOGICAL_W, LOGICAL_H), (0, 0, 0, 0))
     out = img.load()
 
     def local(x, y):
@@ -191,8 +193,8 @@ def render_frame(spec: RavenSpec, k: int) -> Image.Image:
 
     streak_bands = min(4, spec.streak // 7)
 
-    for y in range(LOGICAL):
-        for x in range(LOGICAL):
+    for y in range(LOGICAL_H):
+        for x in range(LOGICAL_W):
             name = owner[y][x]
             if name is None:
                 continue
@@ -234,12 +236,12 @@ def render_frame(spec: RavenSpec, k: int) -> Image.Image:
 
     # outline: opaque pixels neighbouring transparent ones get a thin rim
     rim = []
-    for y in range(LOGICAL):
-        for x in range(LOGICAL):
+    for y in range(LOGICAL_H):
+        for x in range(LOGICAL_W):
             if out[x, y][3] == 0:
                 for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                     nx, ny = x + dx, y + dy
-                    if 0 <= nx < LOGICAL and 0 <= ny < LOGICAL and out[nx, ny][3]:
+                    if 0 <= nx < LOGICAL_W and 0 <= ny < LOGICAL_H and out[nx, ny][3]:
                         rim.append((x, y))
                         break
     for x, y in rim:
@@ -248,15 +250,15 @@ def render_frame(spec: RavenSpec, k: int) -> Image.Image:
     # sparkles: tiny twinkling "shiny things" for starred repos
     for i in range(min(spec.sparkles, 8)):
         a = 2 * math.pi * i / 8 + 0.7
-        sx = int(LOGICAL / 2 + LOGICAL * 0.4 * math.cos(a))
-        sy = int(LOGICAL / 2 + LOGICAL * 0.4 * math.sin(a))
+        sx = int(LOGICAL_W / 2 + LOGICAL_W * 0.4 * math.cos(a))
+        sy = int(LOGICAL_H / 2 + LOGICAL_H * 0.4 * math.sin(a))
         phase = (k / n * 4 + i / 8.0) % 1.0
         if phase < 0.5:
             for dx, dy in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)) if phase < 0.25 else ((0, 0),):
-                if 0 <= sx + dx < LOGICAL and 0 <= sy + dy < LOGICAL:
+                if 0 <= sx + dx < LOGICAL_W and 0 <= sy + dy < LOGICAL_H:
                     out[sx + dx, sy + dy] = (255, 226, 140, 255)
 
-    return img.resize((LOGICAL * SCALE, LOGICAL * SCALE), Image.NEAREST)
+    return img.resize((LOGICAL_W * SCALE, LOGICAL_H * SCALE), Image.NEAREST)
 
 
 def render_gif(spec: RavenSpec, path: str) -> None:
