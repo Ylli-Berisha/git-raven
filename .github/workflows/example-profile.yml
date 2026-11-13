@@ -1,0 +1,22 @@
+# Copy this into your profile repo (<username>/<username>) as
+# .github/workflows/raven.yml and uses this repo.
+name: raven
+on:
+  schedule:
+    - cron: "5 0 * * *"   # nightly, just after midnight UTC
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  raven:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Ylli-Berisha/git-raven@main
+      - name: Commit the new raven
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add raven/raven.gif
+          git diff --cached --quiet || git commit -m "chore: redraw raven"
+          git push

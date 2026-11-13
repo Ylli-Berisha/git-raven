@@ -1,0 +1,29 @@
+name: git-raven
+description: Draw a pixel-art raven from your GitHub activity as an animated GIF.
+author: git-raven
+branding:
+  icon: feather
+  color: purple
+inputs:
+  username:
+    description: GitHub username to draw
+    default: ${{ github.repository_owner }}
+  output:
+    description: Path of the GIF to write
+    default: raven/raven.gif
+  token:
+    description: Token used to read public activity
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - shell: bash
+      run: |
+        pip install --quiet pillow
+        mkdir -p "$(dirname "${{ inputs.output }}")"
+        PYTHONPATH="${{ github.action_path }}" python -m git_raven "${{ inputs.username }}" -o "${{ inputs.output }}"
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
