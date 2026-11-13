@@ -68,12 +68,12 @@ def _pick(levels, t, x, y):
 def _stage_params(stage: int):
     # scale, wing half-span (in body units), tail length, sheen strength
     table = [
-        (0.62, 12.5, 7.0, 0.25),
-        (0.85, 14.0, 9.0, 0.45),
-        (1.10, 15.5, 11.0, 0.65),
-        (1.38, 16.5, 12.5, 0.85),
-        (1.65, 17.0, 14.0, 1.0),
-        (1.90, 17.5, 15.0, 1.0),
+        (1.15, 12.5, 7.0, 0.25),
+        (1.40, 14.0, 9.0, 0.45),
+        (1.65, 15.5, 11.0, 0.65),
+        (1.85, 16.5, 12.5, 0.85),
+        (2.05, 17.0, 14.0, 1.0),
+        (2.25, 17.5, 15.0, 1.0),
     ]
     return table[max(0, min(5, stage))]
 
@@ -87,6 +87,11 @@ def _path(spec: RavenSpec, k: int, n: int):
         amp_x, amp_y = 20.0, 12.0
     else:
         amp_x, amp_y = 26.0, 15.0
+
+    _, wing_l, _, _ = _stage_params(spec.stage)
+    reach = wing_l * _stage_params(spec.stage)[0] + 3          # keep wings in frame
+    amp_x = max(4.0, min(amp_x, LOGICAL / 2 - reach))
+    amp_y = max(4.0, min(amp_y, LOGICAL / 2 - reach))
 
     def pos(t):
         a = 2 * math.pi * t / n
