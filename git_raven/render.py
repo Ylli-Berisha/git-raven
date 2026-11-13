@@ -13,7 +13,7 @@ from PIL import Image, ImageDraw
 LOGICAL_W = 192   # canvas width in logical pixels (768px at 4x)
 LOGICAL_H = 72    # canvas height in logical pixels (288px at 4x)
 SCALE = 4
-FRAMES = 120
+FRAMES = 160
 FRAME_MS = 70
 
 BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
@@ -79,40 +79,116 @@ def _stage_params(stage: int):
     return table[max(0, min(5, stage))]
 
 
-def _path(spec: RavenSpec, k: int, n: int):
-    """Position (x, y) and heading at frame k of n on a closed figure-eight."""
-    # Roam nearly the whole box: the body may reach the edges and wings,
-    # head or tail can slip past them for a moment before it swings back.
-    room_x = LOGICAL_W / 2 - 4
-    room_y = LOGICAL_H / 2 - 4
+def _smooth(t):
+    t = max(0.0, min(1.0, t))
+    return t * t * (3 - 2 * t)
+
+
+def _angle_lerp(a, b, t):
+    d = (b - a + math.pi) % (2 * math.pi) - math.pi
+    return a + d * t
+
+
+def _rest_frames(spec: RavenSpec) -> int:
+    """Quiet days mean a longer rest on the branch, busy days a shorter one."""
     y = spec.yesterday
-    roam = 0.85 if y <= 0 else 0.93 if y < 4 else 1.0
-    amp_x = max(6.0, room_x * roam)
-    amp_y = max(6.0, room_y * roam)
-
-    def pos(t):
-        a = 2 * math.pi * t / n
-        return (LOGICAL_W / 2 + amp_x * math.sin(a),
-                LOGICAL_H / 2 + amp_y * math.sin(2 * a))
-
-    x0, y0 = pos(k)
-    x1, y1 = pos(k + 0.25)
-    return x0, y0, math.atan2(y1 - y0, x1 - x0)
+    return 64 if y <= 0 else 48 if y < 4 else 34
 
 
-def _flap(spec: RavenSpec, k: int, n: int) -> float:
+def _state(spec: RavenSpec, k: int) -> dict:
+    """Where the raven is and what it is doing at frame k.
+
+    Loop: rest on the branch -> take off -> one figure-eight -> land -> rest.
+    """
+    n = spec.frames
+    k %= n
+    R = _rest_frames(spec)
+    F = n - R
+    cxm, cym = LOGICAL_W / 2, LOGICAL_H / 2
+    st = dict(x=cxm, y=cym, h=0.0, phi=0.0, fold=1.0, yaw=0.0, blink=False, wag=0.0)
+
+    if k < R:                                   # resting on the branch
+        t = k / R
+        st["yaw"] = 0.65 * math.sin(2 * math.pi * 1.5 * t)       # looks around
+        st["blink"] = any(c < t < c + 3.0 / R for c in (0.42, 0.8))
+        st["wag"] = 0.22 * math.sin(2 * math.pi * 2 * t)          # tail twitch
+        return st
+
+    u = (k - R) / F                             # 0..1 through the flight
+    amp_x = max(6.0, (LOGICAL_W / 2 - 4) * (0.85 if spec.yesterday <= 0 else 1.0))
+    amp_y = max(6.0, (LOGICAL_H / 2 - 4) * (0.85 if spec.yesterday <= 0 else 1.0))
+    ease = u - math.sin(2 * math.pi * u) / (2 * math.pi)          # slow at both ends
+    a = 2 * math.pi * ease
+    st["x"] = cxm + amp_x * math.sin(a)
+    st["y"] = cym + amp_y * math.sin(2 * a)
+
+    heading = math.atan2(2 * amp_y * math.cos(2 * a), amp_x * math.cos(a))
+    near_end = _smooth(min(u, 1 - u) / 0.16)
+    st["h"] = _angle_lerp(0.0, heading, near_end)                 # face along the branch
+
+    st["fold"] = max(1 - _smooth(u / 0.07), _smooth((u - 0.90) / 0.10))
     y = spec.yesterday
-    if y <= 0:
-        return 0.12 * math.sin(2 * math.pi * 2 * k / n)   # glide
-    flaps = 6 if y < 4 else 9 if y < 10 else 12
-    return 0.95 * math.sin(2 * math.pi * flaps * k / n)
+    flaps = 5 if y <= 0 else 7 if y < 4 else 9 if y < 10 else 11
+    th = 2 * math.pi * flaps * u
+    flare = 1 + 0.25 * (1 - near_end)                              # big beats at take-off / landing
+    st["phi"] = 0.95 * flare * (math.sin(th) - 0.18 * math.sin(2 * th))
+    st["phi"] = max(-1.15, min(1.15, st["phi"]))
+    st["yaw"] = 0.0
+    st["wag"] = 0.12 * math.sin(2 * math.pi * 3 * u)
+    return st
+
+
+BARK_HI = (126, 96, 70)
+BARK = (90, 66, 50)
+BARK_DK = (58, 42, 36)
+LEAF = (74, 116, 90)
+LEAF_DK = (48, 82, 66)
+
+
+def _draw_branch(out) -> None:
+    """A branch seen from above, running left-right through the middle."""
+    cx, cy = LOGICAL_W / 2, LOGICAL_H / 2
+    half = 40
+    top, bot = [], []
+    for i in range(-half, half + 1, 2):
+        wob = 0.9 * math.sin(i * 0.28)
+        taper = 3.4 - 1.4 * (abs(i) / half) ** 2
+        top.append((cx + i, cy + wob - taper))
+        bot.append((cx + i, cy + wob + taper))
+    m = Image.new("L", (LOGICAL_W, LOGICAL_H), 0)
+    d = ImageDraw.Draw(m)
+    d.polygon(top + bot[::-1], fill=255)
+    # twigs
+    d.line([(cx + 16, cy - 3), (cx + 22, cy - 9), (cx + 27, cy - 11)], fill=255, width=1)
+    d.line([(cx - 20, cy + 3), (cx - 25, cy + 8)], fill=255, width=1)
+    px = m.load()
+    for y in range(LOGICAL_H):
+        for x in range(LOGICAL_W):
+            if not px[x, y]:
+                continue
+            rel = (y - (cy - 4.5)) / 9.0                  # 0 top .. 1 bottom: top lit
+            level = [BARK_HI, BARK, BARK_DK]
+            col = _pick(level, max(0.0, min(1.0, rel)), x, y)
+            if (x * 7 + y * 13) % 11 == 0:
+                col = BARK_DK                              # bark flecks
+            out[x, y] = col + (255,)
+    # leaves on the twig ends
+    for lx, ly, c in ((cx + 27, cy - 11, LEAF), (cx + 25, cy - 13, LEAF_DK),
+                      (cx + 29, cy - 12, LEAF_DK), (cx - 25, cy + 8, LEAF),
+                      (cx - 27, cy + 9, LEAF_DK)):
+        for dx in (0, 1):
+            for dy in (0, 1):
+                X, Y = int(lx) + dx, int(ly) + dy
+                if 0 <= X < LOGICAL_W and 0 <= Y < LOGICAL_H:
+                    out[X, Y] = c + (255,)
 
 
 def render_frame(spec: RavenSpec, k: int) -> Image.Image:
     n = spec.frames
     s, wing_l, tail_l, sheen_k = _stage_params(spec.stage)
-    cx, cy, h = _path(spec, k, n)
-    phi = _flap(spec, k, n)
+    st = _state(spec, k)
+    cx, cy, h, phi = st["x"], st["y"], st["h"], st["phi"]
+    fold, yaw, blink = st["fold"], st["yaw"], st["blink"]
     ch, sh = math.cos(h), math.sin(h)
 
     def to_world(pts):
@@ -129,12 +205,17 @@ def render_frame(spec: RavenSpec, k: int) -> Image.Image:
                 for i in range(steps)]
 
     # ---- geometry in local (u forward, v right) units, scaled by s ----
-    body = mask([(u * s, v * s) for u, v in ellipse(7.2, 3.6, 0.0)])
-    head = mask([(u * s, v * s) for u, v in ellipse(3.3, 3.0, 8.0)])
-    beak = mask([(u * s, v * s) for u, v in
-                 [(10.0, -1.7), (13.0, -1.0), (15.2, -0.25), (15.2, 0.25), (13.0, 1.0), (10.0, 1.7)]])
+    def head_rot(pts):                      # turn the head about the neck
+        cyw, syw = math.cos(yaw), math.sin(yaw)
+        return [(6.0 + (u - 6.0) * cyw - v * syw, (u - 6.0) * syw + v * cyw) for u, v in pts]
 
-    wag = 0.18 * math.sin(2 * math.pi * 3 * k / n)
+    body = mask([(u * s, v * s) for u, v in ellipse(7.2, 3.6, 0.0)])
+    head = mask([(u * s, v * s) for u, v in head_rot(ellipse(3.3, 3.0, 8.0))])
+    beak = mask([(u * s, v * s) for u, v in head_rot(
+                 [(10.0, -1.7), (13.0, -1.0), (15.2, -0.25), (15.2, 0.25), (13.0, 1.0), (10.0, 1.7)])])
+    eyes = head_rot([(8.9, -1.25), (8.9, 1.25)])
+
+    wag = st["wag"]
     tl = tail_l
     tail_pts = [(-4.0, -1.8)]
     feathers = 5
@@ -152,8 +233,8 @@ def render_frame(spec: RavenSpec, k: int) -> Image.Image:
     cphi = math.cos(phi)
     sweep = math.sin(phi) * 4.5
     for sgn in (-1, 1):
-        L = wing_l * cphi
-        tip_u = -1.5 - sweep
+        L = max(4.8, wing_l * cphi * (1 - 0.8 * fold))
+        tip_u = (-1.5 - sweep) * (1 - fold) + (-8.5) * fold          # tuck back when perched
         lead, trail = [], []
         steps = 9
         for i in range(steps + 1):
@@ -170,8 +251,12 @@ def render_frame(spec: RavenSpec, k: int) -> Image.Image:
         pts = lead + trail
         wings[sgn] = mask([(u * s, v * sgn * s) for u, v in pts]), L
 
-    layers = [("tail", tail), ("wing-1", wings[-1][0]), ("wing1", wings[1][0]),
-              ("body", body), ("head", head), ("beak", beak)]
+    if fold > 0.5:                          # folded wings lie over the body
+        layers = [("tail", tail), ("body", body), ("wing-1", wings[-1][0]),
+                  ("wing1", wings[1][0]), ("head", head), ("beak", beak)]
+    else:
+        layers = [("tail", tail), ("wing-1", wings[-1][0]), ("wing1", wings[1][0]),
+                  ("body", body), ("head", head), ("beak", beak)]
 
     owner = [[None] * LOGICAL_W for _ in range(LOGICAL_H)]
     for name, m in layers:
@@ -186,6 +271,7 @@ def render_frame(spec: RavenSpec, k: int) -> Image.Image:
 
     img = Image.new("RGBA", (LOGICAL_W, LOGICAL_H), (0, 0, 0, 0))
     out = img.load()
+    _draw_branch(out)
 
     def local(x, y):
         dx, dy = x + 0.5 - cx, y + 0.5 - cy
@@ -209,7 +295,8 @@ def render_frame(spec: RavenSpec, k: int) -> Image.Image:
                 col = _pick(ramp, t, x, y)
                 if name == "head":
                     # eyes
-                    if abs(abs(v) - 1.25) < 0.45 and abs(u - 8.9) < 0.6:
+                    if not blink and any(abs(v - ev) < 0.45 and abs(u - eu) < 0.6
+                                         for eu, ev in eyes):
                         col = EYE
             elif name == "tail":
                 t_along = min(1.0, max(0.0, (-u - 5.0) / tail_l))
@@ -228,7 +315,8 @@ def render_frame(spec: RavenSpec, k: int) -> Image.Image:
                 sheen = _mix(spec.sheen_a, spec.sheen_b, min(1.0, av / max(L, 1)))
                 ramp = [DEEP, BASE if f else DEEP, MID,
                         _scale(sheen, 0.5 + 0.4 * sheen_k)]
-                col = _pick(ramp, light * 0.35 + w * 0.55 * (0.5 + 0.5 * sheen_k), x, y)
+                lit = max(0.0, min(1.0, light + 0.2 * phi))    # upstroke catches the light
+                col = _pick(ramp, lit * 0.35 + w * 0.55 * (0.5 + 0.5 * sheen_k), x, y)
                 for b in range(streak_bands):
                     if abs(av - (5.0 + 3.0 * b)) < 0.55 and w > 0.35:
                         col = sheen_hi_a if b % 2 == 0 else sheen_hi_b

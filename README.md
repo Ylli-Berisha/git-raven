@@ -9,8 +9,10 @@ A pixel-art raven drawn from your GitHub activity, as a looping GIF for your pro
 | Top two languages | Colour of the feather sheen (iridescence blends between them) |
 | Contributions in the last year | Growth, six stages from fledgling to full raven |
 | Current streak | A bright sheen band on the wings for every 7 days (up to 4) |
-| Yesterday's activity | How it flies: none glides, a quiet day flaps slowly, a busy day soars wide and fast |
+| Yesterday's activity | How it spends its loop: a quiet day means slow wingbeats and a long rest on the branch, a busy day means fast wingbeats and a short rest |
 | Stars on your repos | Shiny things twinkling around it, because ravens collect them |
+
+Each loop the raven rests on a branch (looking around, blinking, twitching its tail), takes off, flies a figure-eight and lands again.
 
 Growth thresholds: 0, 150, 500, 1,500, 4,000 and 10,000 contributions.
 

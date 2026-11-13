@@ -37,3 +37,10 @@ def test_streak_and_yesterday():
     d = summarize(user, today)
     assert d["streak"] == 3 and d["yesterday"] == 2 and d["stars"] == 3
     assert d["sheen"][0] == (0x17, 0x86, 0x00)
+
+
+def test_perch_folds_wings():
+    spec = RavenSpec(stage=3, yesterday=6)
+    perched = render_frame(spec, 0).getbbox()          # resting on the branch
+    flying = render_frame(spec, spec.frames // 2 + 10).getbbox()
+    assert (perched[2] - perched[0]) < (flying[2] - flying[0])
