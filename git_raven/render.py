@@ -80,13 +80,13 @@ def _stage_params(stage: int):
 
 def _path(spec: RavenSpec, k: int, n: int):
     """Position (x, y) and heading at frame k of n on a closed figure-eight."""
-    scale, wing_l, _, _ = _stage_params(spec.stage)
-    # Keep the body in frame but let wing tips swing past the edge.
-    room = LOGICAL / 2 - (wing_l * scale) * 0.5 - 4
+    # Roam nearly the whole box: the body may reach the edges and wings,
+    # head or tail can slip past them for a moment before it swings back.
+    room = LOGICAL / 2 - 4
     y = spec.yesterday
-    roam = 0.7 if y <= 0 else 0.85 if y < 4 else 1.0
+    roam = 0.85 if y <= 0 else 0.93 if y < 4 else 1.0
     amp_x = max(6.0, room * roam)
-    amp_y = max(6.0, room * roam * 0.9)
+    amp_y = max(6.0, room * roam)
 
     def pos(t):
         a = 2 * math.pi * t / n
