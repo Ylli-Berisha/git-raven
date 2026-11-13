@@ -8,9 +8,9 @@ def test_stage_thresholds():
     assert [stage_for(n) for n in (0, 149, 150, 4000, 99999)] == [0, 0, 1, 4, 5]
 
 
-def test_frame_is_transparent_512():
+def test_frame_is_transparent_384():
     img = render_frame(RavenSpec(stage=3), 10)
-    assert img.size == (512, 512)
+    assert img.size == (384, 384)
     assert img.getpixel((0, 0))[3] == 0
     assert img.getbbox() is not None
 

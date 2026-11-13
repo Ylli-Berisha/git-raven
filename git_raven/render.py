@@ -1,6 +1,6 @@
 """Pixel-art raven renderer.
 
-Draws a top-down raven on a 128x128 logical grid (upscaled 4x to 512x512),
+Draws a top-down raven on a 96x96 logical grid (upscaled 4x to 384x384),
 with dithered shading, a thin outline and a transparent background.
 """
 from __future__ import annotations
@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 
 from PIL import Image, ImageDraw
 
-LOGICAL = 128
+LOGICAL = 96
 SCALE = 4
 FRAMES = 120
 FRAME_MS = 70
@@ -253,8 +253,8 @@ def render_frame(spec: RavenSpec, k: int) -> Image.Image:
     # sparkles: tiny twinkling "shiny things" for starred repos
     for i in range(min(spec.sparkles, 8)):
         a = 2 * math.pi * i / 8 + 0.7
-        sx = int(LOGICAL / 2 + 52 * math.cos(a))
-        sy = int(LOGICAL / 2 + 52 * math.sin(a))
+        sx = int(LOGICAL / 2 + LOGICAL * 0.4 * math.cos(a))
+        sy = int(LOGICAL / 2 + LOGICAL * 0.4 * math.sin(a))
         phase = (k / n * 4 + i / 8.0) % 1.0
         if phase < 0.5:
             for dx, dy in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)) if phase < 0.25 else ((0, 0),):

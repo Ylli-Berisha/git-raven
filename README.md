@@ -2,7 +2,7 @@
 
 A pixel-art raven drawn from your GitHub activity, as a looping GIF for your profile README.
 
-<p align="center"><img src="docs/demo.gif" width="400" alt="A pixel-art raven in flight" /></p>
+<p align="center"><img src="docs/demo.gif" width="300" alt="A pixel-art raven in flight" /></p>
 
 | Your activity | The raven |
 |---|---|
@@ -22,7 +22,7 @@ Growth thresholds: 0, 150, 500, 1,500, 4,000 and 10,000 contributions.
 3. Add the GIF to your profile `README.md`:
 
 ```md
-<img src="raven/raven.gif" width="400" alt="My raven" />
+<img src="raven/raven.gif" width="300" alt="My raven" />
 ```
 
 It redraws itself every night.
@@ -43,7 +43,7 @@ Flags `--stage`, `--streak` and `--yesterday` override the fetched values.
 pip install pillow pytest && pytest
 ```
 
-The renderer (`git_raven/render.py`) draws on a 128x128 grid, scaled 4x to 512x512,
+The renderer (`git_raven/render.py`) draws on a 96x96 grid, scaled 4x to 384x384,
 with ordered dithering, a thin outline and a transparent background.
 
 MIT licensed.
